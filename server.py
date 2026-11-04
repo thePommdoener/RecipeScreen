@@ -55,16 +55,24 @@ class PageParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.jsonld = []
+        self.json_by_id = {}   # <script type="application/json" id="…"> (z. B. TikTok)
         self.meta = {}
         self.text = []
         self._skip_depth = 0
         self._in_jsonld = False
+        self._json_id = None
         self._jsonld_buf = []
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
-        if tag == "script" and (a.get("type") or "").lower() == "application/ld+json":
+        script_type = (a.get("type") or "").lower()
+        if tag == "script" and script_type == "application/ld+json":
             self._in_jsonld = True
+            self._json_id = None
+            self._jsonld_buf = []
+        elif tag == "script" and script_type == "application/json" and a.get("id"):
+            self._in_jsonld = True
+            self._json_id = a["id"]
             self._jsonld_buf = []
         if tag == "meta":
             key = (a.get("property") or a.get("name") or "").lower()
@@ -78,7 +86,11 @@ class PageParser(HTMLParser):
     def handle_endtag(self, tag):
         if tag == "script" and self._in_jsonld:
             self._in_jsonld = False
-            self.jsonld.append("".join(self._jsonld_buf))
+            content = "".join(self._jsonld_buf)
+            if self._json_id:
+                self.json_by_id[self._json_id] = content
+            else:
+                self.jsonld.append(content)
         if tag in self.SKIP and self._skip_depth > 0:
             self._skip_depth -= 1
 
@@ -104,6 +116,44 @@ def find_recipes(node):
             if isinstance(value, (list, dict)):
                 found += find_recipes(value)
     return found
+
+
+def find_key(node, key):
+    """Erstes Vorkommen eines Schlüssels in verschachteltem JSON."""
+    if isinstance(node, dict):
+        if key in node:
+            return node[key]
+        children = node.values()
+    elif isinstance(node, list):
+        children = node
+    else:
+        return None
+    for child in children:
+        found = find_key(child, key)
+        if found is not None:
+            return found
+    return None
+
+
+TIKTOK_HOSTS = ("tiktok.com", "www.tiktok.com", "m.tiktok.com", "vm.tiktok.com", "vt.tiktok.com")
+
+
+def tiktok_info(parser):
+    """Beschreibung und Ersteller aus den Seitendaten einer TikTok-Videoseite."""
+    raw = parser.json_by_id.get("__UNIVERSAL_DATA_FOR_REHYDRATION__")
+    if not raw:
+        return None
+    try:
+        item = find_key(json.loads(raw), "itemStruct")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(item, dict) or not item.get("desc"):
+        return None
+    author = item.get("author") or {}
+    return {
+        "desc": item["desc"],
+        "author": author.get("nickname") or author.get("uniqueId") or "",
+    }
 
 
 def is_public_host(host):
@@ -371,6 +421,19 @@ def fetch_page(url):
     lines = [" ".join(line.split()) for line in "".join(parser.text).splitlines()]
     text = "\n".join(line for line in lines if line)
 
+    # TikTok: Beschreibung steht nur in den Seitendaten, nicht im sichtbaren Text
+    final_host = (urllib.parse.urlparse(final_url).hostname or "").lower()
+    if final_host in TIKTOK_HOSTS:
+        info = tiktok_info(parser)
+        if info:
+            return {
+                "url": final_url,
+                "source": "tiktok",
+                "recipes": [],
+                "meta": {"og:title": "TikTok von " + info["author"] if info["author"] else "TikTok"},
+                "text": ("Videobeschreibung:\n" + info["desc"])[:MAX_TEXT],
+            }
+
     return {
         "url": final_url,
         "source": "page",
@@ -378,6 +441,80 @@ def fetch_page(url):
         "meta": parser.meta,
         "text": text[:MAX_TEXT],
     }
+
+
+# ---------------------------------------------------------------------------
+# Kalender (iCloud / Google / Outlook über den iCal-Link)
+# ---------------------------------------------------------------------------
+
+CALENDAR_CACHE_SECONDS = 300
+_calendar_cache = {}  # url -> (abrufzeit, ics-bytes)
+
+
+def calendar_urls():
+    urls = load_config().get("calendar_urls") or []
+    if isinstance(urls, str):
+        urls = [urls]
+    # webcal:// ist nur ein anderer Name für https://
+    return [re.sub(r"^webcal://", "https://", u.strip(), flags=re.I) for u in urls if u.strip()]
+
+
+def load_ics(url):
+    now = time.time()
+    cached = _calendar_cache.get(url)
+    if cached and now - cached[0] < CALENDAR_CACHE_SECONDS:
+        return cached[1]
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        data = resp.read(MAX_DOWNLOAD)
+    _calendar_cache[url] = (now, data)
+    return data
+
+
+def calendar_events(start_date, days):
+    import datetime as dt
+    import icalendar
+    import recurring_ical_events
+
+    start = dt.datetime.combine(start_date, dt.time.min)
+    end = start + dt.timedelta(days=days)
+    events, errors = [], []
+
+    for index, url in enumerate(calendar_urls()):
+        try:
+            cal = icalendar.Calendar.from_ical(load_ics(url))
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"Kalender {index + 1}: {e}")
+            continue
+        cal_name = str(cal.get("X-WR-CALNAME", "") or f"Kalender {index + 1}")
+
+        for ev in recurring_ical_events.of(cal).between(start, end):
+            s = ev.get("DTSTART").dt
+            e = ev.get("DTEND").dt if ev.get("DTEND") else None
+            all_day = not isinstance(s, dt.datetime)
+
+            if all_day:
+                e = e or (s + dt.timedelta(days=1))
+                start_s, end_s = s.isoformat(), e.isoformat()
+            else:
+                # Zeitzonen in die Ortszeit dieses PCs umrechnen
+                s = s.astimezone() if s.tzinfo else s
+                e = (e.astimezone() if e.tzinfo else e) if isinstance(e, dt.datetime) else s
+                start_s = s.replace(tzinfo=None).isoformat(timespec="minutes")
+                end_s = e.replace(tzinfo=None).isoformat(timespec="minutes")
+
+            events.append({
+                "title": str(ev.get("SUMMARY", "") or "(ohne Titel)"),
+                "start": start_s,
+                "end": end_s,
+                "allDay": all_day,
+                "location": str(ev.get("LOCATION", "") or ""),
+                "calendar": cal_name,
+                "calendarIndex": index,
+            })
+
+    events.sort(key=lambda x: (x["start"][:10], not x["allDay"], x["start"]))
+    return {"events": events, "errors": errors, "configured": bool(calendar_urls())}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -393,6 +530,21 @@ class Handler(SimpleHTTPRequestHandler):
             except urllib.error.HTTPError as e:
                 self.send_json(502, {"error": f"Seite antwortet mit HTTP {e.code}"})
             except Exception as e:  # noqa: BLE001 – Fehlertext geht an die App
+                self.send_json(502, {"error": str(e)})
+            return
+        if parsed.path == "/api/calendar":
+            import datetime as dt
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                start = dt.date.fromisoformat(q.get("start", [""])[0])
+            except ValueError:
+                start = dt.date.today()
+            days = max(1, min(int(q.get("days", ["7"])[0] or 7), 31))
+            try:
+                self.send_json(200, calendar_events(start, days))
+            except ImportError:
+                self.send_json(500, {"error": "Kalender-Pakete fehlen: py -m pip install -r requirements.txt"})
+            except Exception as e:  # noqa: BLE001
                 self.send_json(502, {"error": str(e)})
             return
         super().do_GET()
@@ -412,6 +564,7 @@ if __name__ == "__main__":
     print(f"RecipeScreen läuft auf Port {PORT}")
     print("YouTube-API-Key: " + ("gefunden" if youtube_api_key() else "fehlt (config.json) – keine Videobeschreibung"))
     print("Gemini-API-Key:  " + (f"gefunden, Modell {gemini_model()}" if gemini_api_key() else "fehlt (config.json) – keine Videoanalyse"))
+    print("Kalender:        " + (f"{len(calendar_urls())} Link(s)" if calendar_urls() else "keiner (calendar_urls in config.json)"))
     print(f"Am Bildschirm öffnen: http://<IP-dieses-PCs>:{PORT}/   (IP mit 'ipconfig' herausfinden)")
     print("Beenden mit Strg+C")
     try:
