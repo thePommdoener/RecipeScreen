@@ -4,93 +4,184 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RecipeScreen</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
 <style>
+    * { box-sizing: border-box; }
+
     body {
         font-family: Arial, sans-serif;
         background-color: white;
         color: black;
         margin: 0;
-        padding: 40px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 100vh;
+        padding: 30px;
     }
 
-    .container {
-        width: 100%;
-        max-width: 800px;
-        text-align: center;
+    .layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 30px;
+        max-width: 1100px;
+        margin: 0 auto;
+    }
+
+    @media (max-width: 800px) {
+        .layout { grid-template-columns: 1fr; }
+    }
+
+    .card {
+        border: 3px solid black;
+        border-radius: 15px;
+        padding: 25px;
     }
 
     #time {
         font-size: 5rem;
         font-weight: bold;
-        margin-bottom: 10px;
     }
 
     #date {
         font-size: 2rem;
-        margin-bottom: 40px;
+        margin-bottom: 30px;
     }
 
-    .weather {
-        border: 3px solid black;
-        border-radius: 15px;
-        padding: 25px;
-        font-size: 2rem;
+    .weather { font-size: 2rem; text-align: center; }
+    .weather-temp { font-size: 4rem; font-weight: bold; }
+    .weather-desc { margin-top: 10px; font-size: 1.5rem; }
+
+    .qr-box { text-align: center; }
+    #qrcode { display: inline-block; margin: 15px 0; }
+    .hint { font-size: 1.2rem; }
+
+    h2 { margin-top: 0; font-size: 1.8rem; }
+
+    #status { font-size: 1rem; color: #666; margin-bottom: 10px; }
+
+    #inbox { list-style: none; padding: 0; margin: 0; }
+
+    #inbox li {
+        border-bottom: 2px solid #ddd;
+        padding: 12px 0;
+        font-size: 1.3rem;
+        word-break: break-all;
     }
 
-    .weather-temp {
-        font-size: 4rem;
-        font-weight: bold;
-    }
-
-    .weather-desc {
-        margin-top: 10px;
-        font-size: 1.5rem;
-    }
+    #inbox li .meta { font-size: 0.9rem; color: #666; }
+    #inbox a { color: black; }
+    .empty { color: #666; font-size: 1.2rem; }
 </style>
 </head>
 
 <body>
 
-<div class="container">
+<div class="layout">
 
-    <div id="time">00:00:00</div>
+    <div>
+        <div id="time">00:00:00</div>
+        <div id="date">Montag, 01. Januar 2026</div>
 
-    <div id="date">Montag, 01. Januar 2026</div>
+        <div class="card weather">
+            <div>🌤 Wetter</div>
+            <div class="weather-temp">12°C</div>
+            <div class="weather-desc">Leicht bewölkt</div>
+        </div>
+    </div>
 
-    <div class="weather">
-        <div>🌤 Wetter</div>
-        <div class="weather-temp">12°C</div>
-        <div class="weather-desc">Leicht bewölkt</div>
+    <div class="card qr-box">
+        <h2>Rezept hinzufügen</h2>
+        <div class="hint">QR-Code mit dem Handy scannen</div>
+        <div id="qrcode"></div>
+        <div id="upload-url" class="meta"></div>
+    </div>
+
+    <div class="card" style="grid-column: 1 / -1;">
+        <h2>Eingegangene Links</h2>
+        <div id="status">Verbinde …</div>
+        <ul id="inbox"></ul>
+        <div id="empty" class="empty">Noch nichts angekommen.</div>
     </div>
 
 </div>
 
 <script>
-
+// ---------- Uhr & Datum ----------
 function updateDateTime() {
     const now = new Date();
-
-    const time = now.toLocaleTimeString('de-DE');
-
-    const date = now.toLocaleDateString('de-DE', {
-        weekday: 'long',
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric'
+    document.getElementById('time').textContent = now.toLocaleTimeString('de-DE');
+    document.getElementById('date').textContent = now.toLocaleDateString('de-DE', {
+        weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
     });
-
-    document.getElementById('time').textContent = time;
-    document.getElementById('date').textContent = date;
 }
-
 updateDateTime();
 setInterval(updateDateTime, 1000);
 
+// ---------- Kanal (ntfy.sh-Topic) ----------
+// Jeder Bildschirm bekommt einen zufälligen, geheimen Kanalnamen.
+// Er wird im Browser gespeichert und steckt im QR-Code.
+// Mit ?k=NAME in der Adresse kann man einen bestimmten Kanal erzwingen.
+function getTopic() {
+    const fromUrl = new URLSearchParams(location.search).get('k');
+    if (fromUrl) return fromUrl;
+    let topic = null;
+    try { topic = localStorage.getItem('recipescreen-topic'); } catch (e) {}
+    if (!topic) {
+        const rand = Array.from(crypto.getRandomValues(new Uint8Array(12)))
+            .map(b => b.toString(36).padStart(2, '0')).join('');
+        topic = 'recipescreen-' + rand;
+        try { localStorage.setItem('recipescreen-topic', topic); } catch (e) {}
+    }
+    return topic;
+}
+const topic = getTopic();
+
+// ---------- QR-Code ----------
+const uploadUrl = new URL('upload.html?k=' + encodeURIComponent(topic), location.href).href;
+new QRCode(document.getElementById('qrcode'), { text: uploadUrl, width: 220, height: 220 });
+document.getElementById('upload-url').textContent = uploadUrl;
+
+// ---------- Eingang ----------
+const inbox = document.getElementById('inbox');
+const seen = new Set();
+
+function addItem(msg) {
+    if (seen.has(msg.id)) return;
+    seen.add(msg.id);
+    document.getElementById('empty').style.display = 'none';
+
+    const li = document.createElement('li');
+    const text = (msg.message || '').trim();
+
+    if (/^https?:\/\//i.test(text)) {
+        const a = document.createElement('a');
+        a.href = text;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = text;
+        li.appendChild(a);
+    } else {
+        li.textContent = text;
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = new Date(msg.time * 1000).toLocaleString('de-DE');
+    li.appendChild(meta);
+
+    inbox.prepend(li);
+}
+
+// Live-Verbindung; "since=12h" holt auch Nachrichten, die angekommen sind,
+// während der Bildschirm aus war (ntfy.sh hebt sie 12 Stunden auf).
+const status = document.getElementById('status');
+const es = new EventSource('https://ntfy.sh/' + encodeURIComponent(topic) + '/sse?since=12h');
+es.onopen = () => { status.textContent = 'Verbunden – wartet auf Links.'; };
+es.onerror = () => { status.textContent = 'Verbindung unterbrochen, versuche erneut …'; };
+es.onmessage = (e) => {
+    try {
+        const msg = JSON.parse(e.data);
+        if (msg.event === 'message') addItem(msg);
+    } catch (err) {}
+};
 </script>
 
 </body>

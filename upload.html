@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rezept senden</title>
+
+<style>
+    * { box-sizing: border-box; }
+
+    body {
+        font-family: Arial, sans-serif;
+        background: white;
+        color: black;
+        margin: 0;
+        padding: 20px 16px;
+    }
+
+    .wrap { max-width: 500px; margin: 0 auto; }
+
+    h1 { font-size: 1.6rem; }
+
+    label { display: block; font-size: 1.1rem; margin-bottom: 8px; }
+
+    input, button {
+        width: 100%;
+        font-size: 1.1rem;
+        padding: 14px;
+        border: 2px solid black;
+        border-radius: 10px;
+    }
+
+    button {
+        margin-top: 15px;
+        background: black;
+        color: white;
+        font-weight: bold;
+    }
+
+    button:disabled { opacity: 0.5; }
+
+    #msg { margin-top: 15px; font-size: 1.1rem; }
+    .ok { color: #1a7f37; }
+    .err { color: #c00; }
+</style>
+</head>
+
+<body>
+<div class="wrap">
+    <h1>Rezept an die Küche senden</h1>
+
+    <form id="form">
+        <label for="link">Link zum Rezept</label>
+        <input id="link" type="url" required placeholder="https://www.chefkoch.de/…" autocomplete="off">
+        <button id="send" type="submit">Senden</button>
+    </form>
+
+    <div id="msg"></div>
+</div>
+
+<script>
+const topic = new URLSearchParams(location.search).get('k');
+const form = document.getElementById('form');
+const msg = document.getElementById('msg');
+const btn = document.getElementById('send');
+
+if (!topic) {
+    form.style.display = 'none';
+    msg.className = 'err';
+    msg.textContent = 'Kein Bildschirm verknüpft. Bitte den QR-Code am Küchenbildschirm scannen.';
+}
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const link = document.getElementById('link').value.trim();
+    btn.disabled = true;
+    msg.className = '';
+    msg.textContent = 'Sende …';
+
+    try {
+        const res = await fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
+            method: 'POST',
+            body: link
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        msg.className = 'ok';
+        msg.textContent = '✓ Gesendet! Sollte jetzt am Bildschirm erscheinen.';
+        form.reset();
+    } catch (err) {
+        msg.className = 'err';
+        msg.textContent = 'Fehler beim Senden: ' + err.message;
+    } finally {
+        btn.disabled = false;
+    }
+});
+</script>
+</body>
+</html>
