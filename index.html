@@ -1,1 +1,97 @@
-Hallo GitHub Pages!
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RecipeScreen</title>
+
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background-color: white;
+        color: black;
+        margin: 0;
+        padding: 40px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+    }
+
+    .container {
+        width: 100%;
+        max-width: 800px;
+        text-align: center;
+    }
+
+    #time {
+        font-size: 5rem;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+
+    #date {
+        font-size: 2rem;
+        margin-bottom: 40px;
+    }
+
+    .weather {
+        border: 3px solid black;
+        border-radius: 15px;
+        padding: 25px;
+        font-size: 2rem;
+    }
+
+    .weather-temp {
+        font-size: 4rem;
+        font-weight: bold;
+    }
+
+    .weather-desc {
+        margin-top: 10px;
+        font-size: 1.5rem;
+    }
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <div id="time">00:00:00</div>
+
+    <div id="date">Montag, 01. Januar 2026</div>
+
+    <div class="weather">
+        <div>🌤 Wetter</div>
+        <div class="weather-temp">12°C</div>
+        <div class="weather-desc">Leicht bewölkt</div>
+    </div>
+
+</div>
+
+<script>
+
+function updateDateTime() {
+    const now = new Date();
+
+    const time = now.toLocaleTimeString('de-DE');
+
+    const date = now.toLocaleDateString('de-DE', {
+        weekday: 'long',
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric'
+    });
+
+    document.getElementById('time').textContent = time;
+    document.getElementById('date').textContent = date;
+}
+
+updateDateTime();
+setInterval(updateDateTime, 1000);
+
+</script>
+
+</body>
+</html>
