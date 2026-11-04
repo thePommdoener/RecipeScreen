@@ -69,6 +69,54 @@
     #inbox li .meta { font-size: 0.9rem; color: #666; }
     #inbox a { color: black; }
     .empty { color: #666; font-size: 1.2rem; }
+
+    .play-btn {
+        display: inline-block;
+        margin-top: 8px;
+        font-size: 1.3rem;
+        font-weight: bold;
+        padding: 12px 22px;
+        border: 3px solid black;
+        border-radius: 12px;
+        background: black;
+        color: white;
+        cursor: pointer;
+    }
+
+    /* ---------- Player-Overlay ---------- */
+    #player {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.9);
+        z-index: 10;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+
+    #player.open { display: flex; }
+
+    #player iframe {
+        width: min(100%, 540px);
+        height: calc(100vh - 120px);
+        border: 0;
+        border-radius: 12px;
+        background: white;
+    }
+
+    #player-close {
+        margin-bottom: 15px;
+        font-size: 1.4rem;
+        font-weight: bold;
+        padding: 12px 30px;
+        border: 3px solid white;
+        border-radius: 12px;
+        background: white;
+        color: black;
+        cursor: pointer;
+    }
 </style>
 </head>
 
@@ -101,6 +149,11 @@
         <div id="empty" class="empty">Noch nichts angekommen.</div>
     </div>
 
+</div>
+
+<div id="player">
+    <button id="player-close" type="button">✕ Schließen</button>
+    <iframe id="player-frame" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
 </div>
 
 <script>
@@ -139,6 +192,38 @@ const uploadUrl = new URL('upload.html?k=' + encodeURIComponent(topic), location
 new QRCode(document.getElementById('qrcode'), { text: uploadUrl, width: 220, height: 220 });
 document.getElementById('upload-url').textContent = uploadUrl;
 
+// ---------- Player ----------
+// Erkennt Instagram-Links wie
+//   https://www.instagram.com/reel/ABC123/?igsh=...
+//   https://www.instagram.com/p/ABC123/
+// und liefert die Adresse des offiziellen Einbettungs-Players.
+function instagramEmbedUrl(link) {
+    try {
+        const u = new URL(link);
+        if (!/(^|\.)instagram\.com$/i.test(u.hostname)) return null;
+        const m = u.pathname.match(/^\/(?:[^/]+\/)?(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
+        if (!m) return null;
+        return 'https://www.instagram.com/p/' + m[2] + '/embed/';
+    } catch (e) {
+        return null;
+    }
+}
+
+const player = document.getElementById('player');
+const playerFrame = document.getElementById('player-frame');
+
+function openPlayer(embedUrl) {
+    playerFrame.src = embedUrl;
+    player.classList.add('open');
+}
+
+function closePlayer() {
+    player.classList.remove('open');
+    playerFrame.src = 'about:blank'; // stoppt das Video
+}
+
+document.getElementById('player-close').addEventListener('click', closePlayer);
+
 // ---------- Eingang ----------
 const inbox = document.getElementById('inbox');
 const seen = new Set();
@@ -158,6 +243,17 @@ function addItem(msg) {
         a.rel = 'noopener';
         a.textContent = text;
         li.appendChild(a);
+
+        const embed = instagramEmbedUrl(text);
+        if (embed) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'play-btn';
+            btn.textContent = '▶ Abspielen';
+            btn.addEventListener('click', () => openPlayer(embed));
+            li.appendChild(document.createElement('br'));
+            li.appendChild(btn);
+        }
     } else {
         li.textContent = text;
     }
