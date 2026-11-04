@@ -20,18 +20,22 @@
 
     h1 { font-size: 1.6rem; }
 
-    label { display: block; font-size: 1.1rem; margin-bottom: 8px; }
+    label { display: block; font-size: 1.1rem; margin: 18px 0 8px; }
+    .sub { font-size: 0.9rem; color: #666; font-weight: normal; }
 
-    input, button {
+    input, textarea, button {
         width: 100%;
         font-size: 1.1rem;
+        font-family: inherit;
         padding: 14px;
         border: 2px solid black;
         border-radius: 10px;
     }
 
+    textarea { min-height: 160px; resize: vertical; }
+
     button {
-        margin-top: 15px;
+        margin-top: 18px;
         background: black;
         color: white;
         font-weight: bold;
@@ -52,6 +56,12 @@
     <form id="form">
         <label for="link">Link zum Rezept</label>
         <input id="link" type="url" required placeholder="https://www.chefkoch.de/…" autocomplete="off">
+
+        <label for="text">
+            Rezepttext <span class="sub">(optional – z. B. die Beschreibung aus Instagram hier einfügen)</span>
+        </label>
+        <textarea id="text" placeholder="Zutaten, Schritte …"></textarea>
+
         <button id="send" type="submit">Senden</button>
     </form>
 
@@ -64,6 +74,9 @@ const form = document.getElementById('form');
 const msg = document.getElementById('msg');
 const btn = document.getElementById('send');
 
+// ntfy.sh nimmt Nachrichten bis 4096 Bytes als Text an – größere würden zu Dateianhängen.
+const MAX_BYTES = 3900;
+
 if (!topic) {
     form.style.display = 'none';
     msg.className = 'err';
@@ -72,7 +85,16 @@ if (!topic) {
 
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const link = document.getElementById('link').value.trim();
+    const url = document.getElementById('link').value.trim();
+    const text = document.getElementById('text').value.trim();
+    const body = JSON.stringify({ url, text });
+
+    if (new TextEncoder().encode(body).length > MAX_BYTES) {
+        msg.className = 'err';
+        msg.textContent = 'Der Text ist zu lang. Bitte auf Zutaten und Schritte kürzen.';
+        return;
+    }
+
     btn.disabled = true;
     msg.className = '';
     msg.textContent = 'Sende …';
@@ -80,11 +102,11 @@ form.addEventListener('submit', async (e) => {
     try {
         const res = await fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
             method: 'POST',
-            body: link
+            body
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         msg.className = 'ok';
-        msg.textContent = '✓ Gesendet! Sollte jetzt am Bildschirm erscheinen.';
+        msg.textContent = '✓ Gesendet! Der Bildschirm bereitet das Rezept jetzt auf.';
         form.reset();
     } catch (err) {
         msg.className = 'err';
