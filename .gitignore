@@ -1,0 +1,4 @@
+# Lokale Zugangsdaten – niemals ins Repo
+config.json
+
+__pycache__/
